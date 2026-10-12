@@ -95,14 +95,23 @@ async function complete(request, id, signal) {
   const model = request.model.slice(slash + 1)
   // 禁用模型和供应商必须同时影响统一 API，不能只隐藏页面。
   if (!(await ctx.llm.listModels(provider)).some(row => row.id === model)) throw Object.assign(new Error('模型不存在或已停用'), { statusCode: 404 })
-  const body = { ...request.responsesBody ?? request.openAi, model: request.model }
+  // Anthropic forwarding already supplies harness messages and tools.
+  const harness = request.openAi === undefined && request.responsesBody === undefined
+  const body = harness
+    ? { max_tokens: request.maxTokens, reasoning_effort: request.reasoningEffort }
+    : { ...request.responsesBody ?? request.openAi, model: request.model }
   const resolved = await ctx.llm.resolveModel(provider, model, signal)
   const effort = normalizeReasoningEffort(request.responses ? responsesReasoningEffort(body) : body.reasoning_effort, resolved, provider, model,
     notice => logger.info(`${request.model}：思考档位 ${notice.requested} ${notice.applied ? `映射为 ${notice.applied}` : '使用模型默认'}`))
   const requested = request.responses ? responsesMaxOutputTokens(body) : body.max_completion_tokens ?? body.max_tokens
   const maxTokens = typeof requested === 'number' ? normalizeMaxTokens(requested, provider, model) : undefined
   const convert = request.responses ? toResponsesGenerateOptions : toGenerateOptions
-  const options = await convert(body, signal, effort, maxTokens, { bridge: attachments }, dropped => logger.warn(`忽略无法表达的工具类型：${dropped.type}`))
+  const options = harness
+    ? { provider, model, messages: request.messages, tools: request.tools, signal,
+        ...request.temperature === undefined ? {} : { temperature: request.temperature },
+        ...effort == null ? {} : { reasoningEffort: effort },
+        ...maxTokens === undefined ? {} : { maxTokens } }
+    : await convert(body, signal, effort, maxTokens, { bridge: attachments }, dropped => logger.warn(`忽略无法表达的工具类型：${dropped.type}`))
   options.sessionId = `standalone:${String(body.user ?? body.conversation ?? 'shared')}`
   for await (const chunk of ctx.llm.stream(markGatewayChannel(options))) {
     if (signal.aborted) throw new Error('请求已取消')

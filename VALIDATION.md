@@ -1,4 +1,50 @@
-# Validation — 0.8.0
+# Validation — 0.9.0
+
+## Upstream standalone/core/channel refresh - 2026-10-11
+
+- Reviewed upstream changes from `f8974369c5904858c696b520d8b9b82ad4425f78`
+  to `e9c4b70d913116284692d7b206a63f39ad6fe8cc`. The snapshot retains 88
+  original paths: 80 byte-for-byte copies and eight recorded adapted paths.
+  All snapshot SHA-256 digests and channel/EAC pin consistency checks pass.
+- Downloaded the complete new original channel bundle and EAC file set from
+  the pinned official source using the production installers; all sizes/hashes
+  passed. EAC source files are unchanged at this revision. The public snapshot
+  still excludes vault data and embedded OAuth/App ID defaults.
+- Added a regression test for native Anthropic forwarding to the real standalone
+  account-channel Worker: unauthorized refusal, authenticated JSON text/tools,
+  `x-api-key` authenticated SSE, output budget and disabled-model refusal.
+  This found an upstream standalone integration gap: the Messages listener
+  supplies harness messages, while the Worker originally only accepted OpenAI
+  or Responses bodies. The reproducible Worker patch now accepts that format
+  and retains the original enablement/effort/budget checks.
+- `npm run check` passed. `npm test`: **215 passed, 0 failed, 2 skipped**.
+  The two optional native-channel tests passed separately (**2/2**) with the
+  verified new original bundle and mocked vendor replies, including Gemini
+  credentials and Loomy QR/poll relays.
+  One concurrent validation run hit the existing tunnel-expiry fixture's 400 ms
+  startup limit under load; rerunning the full suite separately passed. Production
+  expiry remains 30 minutes; this fixture can be sensitive to machine load.
+- Both real Magpie/Bun smoke scripts passed against isolated fixture services.
+  The unified managed smoke, including uninstall, passed using the previously
+  built `/tmp/ofm-magpie-uninstall-bin` with the documented uninstall support.
+  An initial run against `/tmp/magpie-compaction-darwin` passed login, inference
+  and host-exit shutdown but failed cleanup because that build lacks the paired
+  uninstall callback support. This is the existing documented host requirement.
+- Chromium checked overview, model listing, account channels, EAC and settings
+  at 1440x1000 and 390x844. Pages rendered without uncaught script errors; overview
+  had no horizontal document overflow. Screenshots of desktop account channels
+  and mobile model listing were visually inspected. Browser fixture data and
+  generated screenshots remain outside the published package.
+- Live vendor account eligibility, real EAC GitHub authorization, Windows proxy
+  behavior on Windows and all provider quotas were not tested. No live public
+  Cloudflare tunnel was needed for this upstream refresh; existing gateway,
+  callback, lifecycle and tunnel fixture coverage passed.
+- Aggregate providers, fallback chains and token-saving dependencies are retained
+  with the updated core, but upstream standalone management lacks their complete
+  configuration and DSH wiring. This release does not claim those controls
+  are available in Magpie.
+
+## Previous 0.8.0 validation record
 
 ## Accountless Cloudflare console and Tailscale removal — 2026-10-09
 

@@ -10,6 +10,8 @@ import { once } from 'node:events';
 import { createManagedPlugin, managedModel } from '../src/managed.mjs';
 import { getManagedRuntime } from '../src/managed-runtime.mjs';
 import uninstall from '../uninstall.mjs';
+import { CHANNEL_COMMIT, CHANNEL_FILES } from '../src/channel-source.mjs';
+import { EAC_COMMIT, EAC_FILES } from '../src/eac-source.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -23,13 +25,22 @@ const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
 test('upstream runtime hashes match the declared snapshot and Google configuration patch', () => {
   const dir = path.join(root, 'vendor/ofm');
   const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'UPSTREAM.json')));
-  assert.equal(manifest.commit, 'f8974369c5904858c696b520d8b9b82ad4425f78');
+  assert.equal(manifest.commit, CHANNEL_COMMIT);
+  assert.equal(manifest.commit, EAC_COMMIT);
+  for (const file of [...CHANNEL_FILES, ...EAC_FILES].filter(file => !manifest.omitted.includes(file.path))) {
+    const original = manifest.files.find(row => row.path === file.path);
+    assert.equal(file.sha256, original?.sha256, file.path);
+    if (file.bytes !== undefined) assert.equal(file.bytes, original?.bytes, file.path);
+  }
   for (const file of manifest.files) {
     const bytes = fs.readFileSync(path.join(dir, file.path));
     const patch = manifest.adaptations?.find(patch => patch.path === file.path);
     if (patch) assert.equal(patch.originalSha256, file.sha256);
     assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'), patch?.sha256 ?? file.sha256, file.path);
     assert.doesNotMatch(file.path, /(?:^|\/)(?:settings|channel-credentials|eac-user|service\.lock)\.json$/);
+    if (/\/web\/channels-[^/]+\.js$/.test(file.path)) {
+      assert.match(bytes.toString('utf8'), /t\.setup\?\.message\?\?a\("eac\.noLane"\)/, file.path);
+    }
   }
   const business = fs.readFileSync(path.join(dir, 'packages/standalone/channels/business.mjs'), 'utf8');
   for (const name of ['vault-data.js', 'vault-anchor.js']) assert.equal(fs.existsSync(path.join(dir, 'src', name)), false);
@@ -258,6 +269,27 @@ test('real bundled service: console handoff, channels, EAC, requests, key rotati
     assert.equal(response.status, 200); await response.text();
     assert.equal(requests.findLast(req => req.pathname.endsWith('/chat/completions')).body.max_tokens, 4096);
   });
+  await t.test('native Anthropic gateway authenticates, completes JSON and streams channel replies', async () => {
+    const body = { model: 'buddy/fixture-free', max_tokens: 1024, messages: [{ role: 'user', content: 'hi' }],
+      tools: [{ name: 'lookup', input_schema: { type: 'object', properties: {} } }] };
+    const address = `${conn.base}/messages`;
+    assert.equal((await fetch(address, { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body) })).status, 401);
+    const complete = await api('/v1/messages', body);
+    assert.equal(complete.status, 200, JSON.stringify(complete.body));
+    assert.equal(complete.body.type, 'message');
+    assert.ok(complete.body.content.some(block => block.type === 'text' && block.text === 'managed-ok'));
+    assert.ok(complete.body.content.some(block => block.type === 'tool_use' && block.name === 'lookup'));
+    assert.equal(requests.findLast(req => req.pathname.endsWith('/chat/completions')).body.max_tokens, 1024);
+    const streamed = await fetch(address, { method: 'POST', headers: {
+      'content-type': 'application/json', 'x-api-key': (await runtime.connection()).key },
+      body: JSON.stringify({ ...body, stream: true }) });
+    assert.equal(streamed.status, 200);
+    const frames = await streamed.text();
+    assert.match(frames, /event: message_start/);
+    assert.match(frames, /managed-ok/);
+    assert.match(frames, /event: message_stop/);
+  });
   await t.test('EAC preserves upstream authorization and updates the unified model catalog', async () => {
     const status = await api('/api/management/eac/status');
     assert.equal(status.body.available, true);
@@ -279,6 +311,9 @@ test('real bundled service: console handoff, channels, EAC, requests, key rotati
     const disabled = await api('/api/management/channels/rpc', { method: 'model.setDisabled', payload: { provider: 'buddy', modelId: 'fixture-free', disabled: true } });
     assert.equal(disabled.body.ok, true, JSON.stringify(disabled));
     const before = requests.filter(req => req.pathname.endsWith('/chat/completions')).length;
+    const anthropic = await api('/v1/messages', { model: 'buddy/fixture-free', max_tokens: 1024,
+      messages: [{ role: 'user', content: 'hi' }] });
+    assert.equal(anthropic.status, 404);
     const response = await call('buddy/fixture-free');
     assert.equal(response.status, 404);
     const stream = await response.text();
