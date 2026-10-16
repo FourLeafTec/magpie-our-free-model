@@ -1,7 +1,7 @@
 import { getManagedRuntime } from './managed-runtime.mjs';
 import { safeID, positive, fallback, chatRequest, forwardChat } from './transport.mjs';
 import { remoteByDefault } from './cloudflare-console.mjs';
-import { isSystemOne, forwardSystemOne, isDecisionModel } from './systemone.mjs';
+import { isSystemOne, isDecisionModel, serveSystemOne } from './systemone.mjs';
 import fs from 'node:fs';
 
 const PROVIDER = 'our-free-model';
@@ -102,12 +102,17 @@ export async function createManagedPlugin(input, options = {}) {
           if (current.base !== conn.base) throw new Error('内置服务地址发生变化，请刷新或重载供应商');
           const request = new Request(input, init);
           // The decision models are this provider's too (config's decide):
-          // magpie posts a System One question at the same base, and it
-          // goes to Zen's /v1/systemone unchanged. The chat models stay on
-          // the service below, which owns their accounts.
+          // magpie posts a System One question at the same base, and the
+          // admitted one goes to Zen's /v1/systemone unchanged. The chat
+          // models stay on the service below, which owns their accounts.
           if (request.method === 'POST' && isSystemOne(new URL(request.url).pathname)) {
-            request.signal.throwIfAborted();
-            return forwardSystemOne(request, await request.text());
+            return serveSystemOne(request, await request.text(), {
+              // A decision model is admitted exactly as a chat one: the
+              // service's live catalog decides, so a model that never
+              // existed, was switched off in the console, or is no
+              // decision model never reaches Zen.
+              admit: model => runtime.command('admit', { model }, request.signal),
+            });
           }
           const { body } = await chatRequest(request, undefined, current.base);
           request.signal.throwIfAborted();

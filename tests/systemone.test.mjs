@@ -9,7 +9,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createManagedPlugin } from '../src/managed.mjs';
-import { isSystemOne, forwardSystemOne } from '../src/systemone.mjs';
+import { isSystemOne, forwardSystemOne, serveSystemOne } from '../src/systemone.mjs';
 
 test('a system one path is the provider route, not its chat one', () => {
   // magpie posts at <base>/systemone, and its own gateway serves
@@ -63,4 +63,68 @@ test('the provider declares the decision API it serves', async t => {
   // This is what magpie reads: without it, the decision models would have
   // to be registered as a provider of their own
   assert.equal(cfg.provider['our-free-model'].decide, true);
+});
+
+// The route serves this provider's decision models alone, and they are
+// admitted exactly as a chat request's model is: a model that never existed,
+// was switched off in the console, or does not answer System One must be
+// refused here, not forwarded for Zen to refuse. This is the check the chat
+// route already had and the decision branch did not.
+test('a system one request is admitted before it is forwarded', async () => {
+  const sent = [];
+  const admitted = new Set(['jev-1.13-free']);
+  // The vendor transport, stubbed at the same seam the forward itself uses
+  // (fetch): it answers what Zen would and remembers what left the plugin.
+  const fetchImpl = async (url, init) => {
+    sent.push({ url, body: init.body });
+    return Response.json({ model: 'jev-1.13-free', answers: {} });
+  };
+  const serve = (body, { admit = model => Promise.resolve(admitted.has(model)) } = {}) => {
+    const request = new Request('http://127.0.0.1/v1/systemone', { method: 'POST', body });
+    return serveSystemOne(request, body, { admit, fetchImpl });
+  };
+
+  // the one this provider serves and the service admits: forwarded unchanged
+  const question = JSON.stringify({ model: 'jev-1.13-free', state: { text: 'ping' }, questions: {} });
+  const answer = await serve(question);
+  assert.equal(answer.status, 200);
+  assert.deepEqual(sent, [{ url: 'https://opencode.ai/zen/v1/systemone', body: question }]);
+
+  // one that never existed, one switched off (admit says no), and a chat
+  // model of the same provider: all refused, nothing forwarded
+  for (const model of ['jev-9.9-free', 'mimo-v2.6-flash-free']) {
+    const refused = await serve(JSON.stringify({ model, state: { text: 'ping' }, questions: {} }));
+    assert.equal(refused.status, 404);
+    assert.equal((await refused.json()).error.type, 'invalid_request_error');
+  }
+  assert.deepEqual(sent.map(entry => entry.body), [question]);
+
+  // a chat model of this provider is no decision model even where the
+  // service's catalog would admit the id
+  const chatModel = await serve(JSON.stringify({ model: 'mimo-v2.6-flash-free', questions: {} }),
+    { admit: () => Promise.resolve(true) });
+  assert.equal(chatModel.status, 404);
+  assert.deepEqual(sent.map(entry => entry.body), [question]);
+
+  // a body that is no System One request names no model to admit
+  for (const body of ['not json', '[]', 'null', JSON.stringify({ questions: {} }), JSON.stringify({ model: '__proto__' })]) {
+    const refused = await serve(body, { admit: () => Promise.resolve(true) });
+    assert.equal(refused.status, 404, body);
+  }
+  assert.deepEqual(sent.map(entry => entry.body), [question]);
+});
+
+// The admission call is the request's own: a caller who gives up while the
+// service is being asked must not have the question forwarded anyway.
+test('an aborted system one request is not forwarded', async () => {
+  const controller = new AbortController();
+  const request = new Request('http://127.0.0.1/v1/systemone', { method: 'POST', signal: controller.signal,
+    body: JSON.stringify({ model: 'jev-1.13-free', questions: {} }) });
+  controller.abort();
+  const sent = [];
+  await assert.rejects(serveSystemOne(request, JSON.stringify({ model: 'jev-1.13-free', questions: {} }), {
+    admit: model => Promise.resolve(model === 'jev-1.13-free'),
+    fetchImpl: async () => { sent.push('must not run'); return Response.json({}); },
+  }));
+  assert.deepEqual(sent, []);
 });

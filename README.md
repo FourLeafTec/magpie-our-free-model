@@ -304,6 +304,9 @@ Windows 的 `nodePath` 在 JSON 中例如 `C:\\Program Files\\nodejs\\node.exe`�
 给 `our-free-model` 声明了 `decide`，并给 `jev-1.13-free` 打了决策模型标记；
 Magpie 据此把该模型认成决策模型：路由组可以直接把它当分类器，agent 拿它聊天会被
 明确拒绝，而 `POST /v1/systemone` 的请求走插件自己的 `fetch`，原样转给 Zen 的决策接口。
+和聊天请求一样，转发前先过本机服务的实时准入：只有控制台目录里仍存在、未停用、
+且属于决策模型的 id 才会转发给 Zen；不存在、已停用或本该走 `/chat/completions`
+的模型，一律在这里就被拒绝（`404`）。
 
 ```sh
 # 路由组直接把 Jev 当分类器

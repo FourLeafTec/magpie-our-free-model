@@ -109,6 +109,33 @@ End to end on a Magpie built with the matching change (Windows amd64, Bun
 Magpie that knows a plugin provider may serve a decision API (the `decide`
 field and the per-model `decides`); an older Magpie ignores them.
 
+## The decision route admits its model — 2026-10-16
+
+The `/systemone` branch used to forward any POST to Zen, so a caller could ask
+for an id that never existed, one switched off in the console, or a plain chat
+model, and Zen's own refusal was the only answer. It now admits the model it
+names before forwarding, exactly as the chat route does: the service's live
+catalog (not Magpie's cache) decides, and the id must also be a decision model
+of this provider.
+
+- `src/systemone.mjs`: `systemOneModel` reads the named model; `serveSystemOne`
+  refuses a non-decision or unadmitted id with `404` and only then forwards.
+- `src/managed.mjs`: the `/systemone` branch calls `serveSystemOne`, passing the
+  same `admit` command the chat path uses.
+- `tests/systemone.test.mjs`: the gate (an admitted id forwarded unchanged; an
+  unknown id, a chat model, an unnamed body and `__proto__` all refused with
+  nothing forwarded) and the aborted-request case.
+- `tests/managed.test.mjs`: through the real loader and runner, the admitted
+  decision model is forwarded, while an unknown id, a chat model and an unnamed
+  body are refused; dropping the model from the service catalog and refreshing
+  makes it refused too.
+
+Driver harness (loopback fixture for the lane, host-side interception of the
+Zen hop, Windows amd64, Node 24.20): before the change all five requests were
+forwarded; after it exactly the admitted `jev-1.13-free` was, the other four
+answering `404` with no forward. `npm test`: **196 passed, 0 failed, 13
+skipped**.
+
 ## Previous 0.7.0 validation record
 
 ## Original channel bundle and remote callbacks — 2026-10-09
