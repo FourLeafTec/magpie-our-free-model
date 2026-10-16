@@ -8,12 +8,14 @@ import { removeEmbeddedOAuthDefaults, externalizeEacCredentials } from './ofm-go
 import { patchChannelSource } from './ofm-channel-source-patch.mjs';
 import { patchEacDiagnostics, patchEacSetupUi } from './ofm-eac-setup-patch.mjs';
 
-const pin = 'f8974369c5904858c696b520d8b9b82ad4425f78';
+const pin = 'e9c4b70d913116284692d7b206a63f39ad6fe8cc';
 const root = path.resolve(process.argv[2] || '');
 if (!process.argv[2]) throw new Error('Usage: node scripts/vendor-ofm.mjs /path/to/upstream');
 if (execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim() !== pin) throw new Error(`Expected upstream ${pin}`);
-const dest = fileURLToPath(new URL('../vendor/ofm/', import.meta.url));
-if (fs.existsSync(dest)) throw new Error('Snapshot already exists; review changes before replacing it');
+const snapshot = fileURLToPath(new URL('../vendor/ofm/', import.meta.url));
+if (fs.existsSync(snapshot) && process.argv[3] !== '--replace') throw new Error('Snapshot already exists; review changes before using --replace');
+const dest = fs.mkdtempSync(path.join(path.dirname(snapshot), '.ofm-stage-'));
+process.on('exit', () => fs.rmSync(dest, { recursive: true, force: true }));
 const files = new Set(['LICENSE', 'package.json', 'packages/standalone/package.json', 'packages/standalone/README.md',
   'scripts/standalone-third-party.txt', 'vendor/channel-pack/LICENSE', 'vendor/channel-pack/NOTICE.md',
   'vendor/channel-pack/qoder-auth-wasm.wasm']);
@@ -42,11 +44,14 @@ const adaptation = removeEmbeddedOAuthDefaults(dest);
 const eacAdaptations = externalizeEacCredentials(dest);
 const adaptations = [adaptation, ...eacAdaptations];
 const digest = content => crypto.createHash('sha256').update(content).digest('hex');
+const channelPages = manifest.filter(row => /^packages\/standalone\/web\/channels-[^/]+\.js$/.test(row.path));
+if (!channelPages.length) throw new Error('Upstream channel UI bundle missing');
 for (const [file, patch, reason] of [
   ['packages/standalone/eac.mjs', patchEacDiagnostics, 'Expose safe EAC installation diagnostics.'],
-  ['packages/standalone/web/app.js', patchEacSetupUi, 'Display safe EAC installation diagnostics.'],
+  ...channelPages.map(row => [row.path, patchEacSetupUi, 'Display safe EAC installation diagnostics.']),
   ...['packages/standalone/service.mjs', 'packages/standalone/channels/runtime.mjs', 'packages/standalone/channels/worker.mjs']
-    .map(file => [file, source => patchChannelSource(file, source), 'Select verified unchanged upstream channel business in the Worker.']),
+    .map(file => [file, source => patchChannelSource(file, source), 'Select verified unchanged upstream channel business in the Worker.'
+      + (file.endsWith('/worker.mjs') ? ' Accept harness messages/tools from the native Anthropic gateway; retain model enablement and effort/budget normalization.' : '')]),
 ]) {
   const target = path.join(dest, file);
   const updated = patch(fs.readFileSync(target, 'utf8'));
@@ -58,4 +63,15 @@ for (const [file, patch, reason] of [
 const omitted = ['src/vault-data.js', 'src/vault-anchor.js'];
 fs.writeFileSync(path.join(dest, 'UPSTREAM.json'), JSON.stringify({ repository: 'https://github.com/Ebony-Vinyl/dsh-our-free-model', commit: pin,
   files: manifest.filter(file => !omitted.includes(file.path)), omitted, adaptations }, null, 2) + '\n');
+// Keep the separately collected complete UI dependency licenses.
+const webLicenses = path.join(snapshot, 'WEB_THIRD_PARTY_LICENSES.txt');
+if (fs.existsSync(webLicenses)) fs.copyFileSync(webLicenses, path.join(dest, 'WEB_THIRD_PARTY_LICENSES.txt'));
+const backup = `${dest}-previous`;
+if (fs.existsSync(snapshot)) fs.renameSync(snapshot, backup);
+try { fs.renameSync(dest, snapshot); }
+catch (error) {
+  if (fs.existsSync(backup)) fs.renameSync(backup, snapshot);
+  throw error;
+}
+fs.rmSync(backup, { recursive: true, force: true });
 console.log('Copied runtime without embedded OAuth/EAC defaults; recorded all adaptations');

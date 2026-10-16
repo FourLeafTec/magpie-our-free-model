@@ -13,7 +13,7 @@ export function patchEacDiagnostics(source) {
 }
 
 export function patchEacSetupUi(source) {
-  const before = 'a("eac.noLane"));const x=t.repo';
-  if (source.split(before).length !== 2) throw new Error('Upstream EAC UI integration changed');
-  return source.replace(before, 't.setup?.message??a("eac.noLane"));const x=t.repo');
+  const before = /a\("eac\.noLane"\)\);const [a-zA-Z_$][\w$]*=t\.repo/g;
+  if ((source.match(before) ?? []).length !== 1) throw new Error('Upstream EAC UI integration changed');
+  return source.replace(before, match => `t.setup?.message??${match}`);
 }

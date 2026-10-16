@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 
-export const EAC_COMMIT = 'f8974369c5904858c696b520d8b9b82ad4425f78';
+export const EAC_COMMIT = 'e9c4b70d913116284692d7b206a63f39ad6fe8cc';
 // Original standalone entry point and its dependencies, unchanged. The shared
 // gateway material stays in the user's private runtime cache, outside the package.
 export const EAC_FILES = Object.freeze([
